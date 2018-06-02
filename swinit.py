@@ -37,6 +37,7 @@ class Device(object):
     while True:
       b = self.port.read()
       if len(b) == 0:
+        print('T>', line)
         raise DeviceTimeoutError()
 
       try:
@@ -64,6 +65,13 @@ class Device(object):
     print('<', data)
     self.port.write(data)
 
+  def _clear_buffer(self):
+    old_timeout = self.port.timeout
+    self.port.timeout = 1
+    while len(self.port.read()) > 0:
+      pass
+    self.port.timeout = old_timeout
+
   def wait_for_bootloader(self):
     """Wait for bootloader, most commonly ROMMON.
 
@@ -79,13 +87,8 @@ class Device(object):
       for i in range(1, 3):
         time.sleep(1)
         self.port.send_break()
-      # Sending breaks is a bit messy as can be seen above, so clear
-      # buffer
-      old_timeout = self.port.timeout
-      self.port.timeout = 1
-      while len(self.port.read()) > 0:
-        pass
-      self.port.timeout = old_timeout
+      # Sending breaks is a bit messy as can be seen above, so clear buffer
+      self._clear_buffer()
       self.poke()
       self._read_line([boot_prompt])
     print('Entered bootloader')
@@ -117,7 +120,7 @@ class Device(object):
       self._read_line(['switch: '])
 
   def poke(self):
-    """Send CR to solicit any response from the device."""
+    """Send LF to solicit any response from the device."""
     self._write(b'\n')
 
   def clear_config(self):
@@ -148,19 +151,26 @@ class Device(object):
       cisco_config_prompt = (
               'Would you like to enter the initial configuration dialog\? \[yes/no\]: ')
       cisco_booted = '.*Press RETURN to get started.*'
-      line = self._read_line([cisco_config_prompt, cisco_booted])
+      line = self._read_line([cisco_config_prompt, cisco_booted, '.*Switch>'])
       if line == cisco_config_prompt:
         self._write(b'no\n')
-      if line == cisco_booted:
-        # Even though Cisco says that you can press enter to get started,
-        # it might take a while to wake up
-        time.sleep(1)
-        self.poke()
-        time.sleep(1)
-        self.poke()
-        time.sleep(1)
-        self.poke()
-        return
+        continue
+      # Even though Cisco says that you can press enter to get started,
+      # it might take a while to wake up
+      old_timeout = self.port.timeout
+      self.port.timeout = 10
+      for i in range(10):
+        try:
+          self.poke()
+          # Try CRLF for good measure, seems to be need for the RETURN prompt
+          self._write(b'\r\n')
+          self._read_line(['.*Switch>'])
+          break
+        except DeviceTimeoutError:
+          print('Console not responsive yet, retrying')
+      self.port.timeout = old_timeout
+      self._clear_buffer()
+      return
 
   def configure(self):
     """Bring the device to a state where swboot can configure it."""
@@ -170,12 +180,15 @@ class Device(object):
     if self.model.startswith('WS-C3850-'):
       # Erase config on master device and reload both
       if self.mgmt_if_status:
+        self._clear_buffer()
         self.poke()
+        self._read_line(['.*Switch>'])
         self._write(b'en\n')
+        self._read_line(['.*Switch#'])
         self._write(b'wr erase\n')
         self._write(b'\n')
+        self._read_line(['.*Switch#'])
         self._write(b'reload\n')
-        self._write(b'no\n')
         self._write(b'\n')
       self.wait_for_bootloader()
       self._write(b'set SWITCH_IGNORE_STARTUP_CFG 0\n')
