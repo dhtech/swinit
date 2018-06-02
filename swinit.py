@@ -10,6 +10,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string('serial', '/dev/ttyUSB0', 'Serial device to manage')
 flags.DEFINE_integer('baud', 9600, 'Serial baud rate')
 flags.DEFINE_integer('timeout', 60, 'Device timeout before resetting state')
+flags.DEFINE_bool('boot', True, 'Execute boot after init')
 
 
 class Error(Exception):
@@ -20,6 +21,10 @@ class DeviceTimeoutError(Error):
   """A timeout happened while reading from device."""
 
 
+class UnsupportedDeviceError(Error):
+  """The operation is not known how to do on the given device."""
+
+
 class Device(object):
   def __init__(self, port):
     self.port = port
@@ -27,7 +32,7 @@ class Device(object):
     self.mgmt_if_status = None
 
   def _read_line(self, stops, rest=False):
-    line = ""
+    line = ''
     while True:
       b = self.port.read()
       if len(b) == 0:
@@ -44,12 +49,12 @@ class Device(object):
           # If asked for the rest of line, abort if we hit it
           print()
           return line
-        if line != "":
+        if line != '':
           print()
-        line = ""
+        line = ''
       else:
         line = line + b.decode()
-        sys.stdout.write("Line is now: '" + line + "'\r")
+        sys.stdout.write('Line is now: "' + line + '"\r')
         sys.stdout.flush()
       for stop in stops:
         if re.match(stop, line):
@@ -72,7 +77,7 @@ class Device(object):
     self._read_line(['MODEL_NUM='])
     self.model = self._read_line([], rest=True)
     self._read_line(['switch: '])
-    print("Model is:", self.model)
+    print('Model is:', self.model)
 
   def has_mgmt_interface(self):
     """If the device has an Ethernet management interface."""
@@ -95,6 +100,24 @@ class Device(object):
     """Send CR to solicit any response from the device."""
     self.port.write(b'\n')
 
+  def clear_config(self):
+    """Remove all persistent configuration from device."""
+    if self.model.startswith('WS-C3850-'):
+      self.port.write(b'set SWITCH_IGNORE_STARTUP_CFG 1\n')
+    else:
+      raise UnsupportedDeviceError(self.model)
+    self._read_line(['switch: '])
+
+  def boot(self):
+    """Boot device."""
+    self.port.write(b'boot\n')
+
+  def set_switch_number(self, num):
+    """Configure switch stack identity."""
+    if self.model.startswith('WS-C3850-'):
+      self.port.write(b'set SWITCH_NUMBER ' + str(num).encode() + b'\n')
+      self._read_line(['switch: '])
+
 
 class Events(object):
 
@@ -104,7 +127,7 @@ class Events(object):
   def detected(self):
     """Play discovery sound to inform operator we have it from here."""
     self.last_state = 'detected'
-    os.system("aplay detected.wav")
+    os.system('aplay detected.wav')
 
   def reset(self):
     """Play reset sound to inform operator we're ready again."""
@@ -112,7 +135,7 @@ class Events(object):
     if self.last_state == 'reset':
       return
     self.last_state = 'reset'
-    os.system("aplay reset.wav")
+    os.system('aplay reset.wav')
 
 
 def main(argv):
@@ -134,19 +157,33 @@ def main(argv):
       # State 0: wait for bootloader prompt (ROMMON or so)
       device.wait_for_bootloader()
 
-      print("Detected bootloader")
+      print('Detected bootloader')
       events.detected()
 
       device.learn_model()
 
       if device.has_mgmt_interface():
-        print("Probing management interface")
+        print('Probing management interface')
         device.probe_mgmt_if()
-        print(device.mgmt_if_status)
+        # If the mgmt if is up, we consider this device to be the no 1 switch
+        # otherwise no 2.
+        if device.mgmt_if_status:
+          print('Switch is no 1')
+          device.set_switch_number(1)
+        else:
+          print('Switch is no 2')
+          device.set_switch_number(2)
 
-      print("Done")
+      device.clear_config()
+      print('Done')
+      if FLAGS.boot:
+        device.boot()
+      else:
+        print('No-boot mode, sleeping for 10 seconds instead')
+        import time
+        time.sleep(10)
     except DeviceTimeoutError:
-      print("Device timed out, resetting state")
+      print('Device timed out, resetting state')
       events.reset()
 
 
