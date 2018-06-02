@@ -4,12 +4,13 @@ import os
 import re
 import serial
 import sys
+import time
 
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string('serial', '/dev/ttyUSB0', 'Serial device to manage')
 flags.DEFINE_integer('baud', 9600, 'Serial baud rate')
-flags.DEFINE_integer('timeout', 180, 'Device timeout before resetting state')
+flags.DEFINE_integer('timeout', 600, 'Device timeout before resetting state')
 flags.DEFINE_bool('boot', True, 'Execute boot after init')
 
 
@@ -47,19 +48,21 @@ class Device(object):
       if b == b'\n' or b == b'\r':
         if rest:
           # If asked for the rest of line, abort if we hit it
-          print()
+          print('->', line)
           return line
         if line != '':
-          print()
+          print('>', line)
         line = ''
       else:
         line = line + b.decode()
-        sys.stdout.write('Line is now: "' + line + '"\r')
-        sys.stdout.flush()
       for stop in stops:
         if re.match(stop, line):
-          print()
+          print('->', line)
           return stop
+
+  def _write(self, data):
+    print('<', data)
+    self.port.write(data)
 
   def wait_for_bootloader(self):
     """Wait for bootloader, most commonly ROMMON.
@@ -68,12 +71,29 @@ class Device(object):
     return when the device is in this bootloader.
     """
     # TODO(bluecmd): Only cisco switches are supported right now
-    self._read_line(['switch: '])
+    break_prompt = (
+            'Interrupt the system within 5 seconds to intervene\.')
+    boot_prompt = 'switch: '
+    line = self._read_line([break_prompt, boot_prompt])
+    if line == break_prompt:
+      for i in range(1, 3):
+        time.sleep(1)
+        self.port.send_break()
+      # Sending breaks is a bit messy as can be seen above, so clear
+      # buffer
+      old_timeout = self.port.timeout
+      self.port.timeout = 1
+      while len(self.port.read()) > 0:
+        pass
+      self.port.timeout = old_timeout
+      self.poke()
+      self._read_line([boot_prompt])
+    print('Entered bootloader')
 
   def learn_model(self):
     """Figure out what model the device is."""
 
-    self.port.write(b'set\n')
+    self._write(b'set\n')
     self._read_line(['MODEL_NUM='])
     self.model = self._read_line([], rest=True)
     self._read_line(['switch: '])
@@ -87,7 +107,7 @@ class Device(object):
 
   def probe_mgmt_if(self):
     """Detect management if port status."""
-    self.port.write(b'mgmt_init\n')
+    self._write(b'mgmt_init\n')
     mgmt_up = 'switch: '
     mgmt_down = '.*PHY link is down'
     line = self._read_line([mgmt_up, mgmt_down])
@@ -98,53 +118,69 @@ class Device(object):
 
   def poke(self):
     """Send CR to solicit any response from the device."""
-    self.port.write(b'\n')
+    self._write(b'\n')
 
   def clear_config(self):
     """Remove all persistent configuration from device."""
     if self.model.startswith('WS-C3850-'):
-      self.port.write(b'set SWITCH_IGNORE_STARTUP_CFG 1\n')
+      self._write(b'set SWITCH_IGNORE_STARTUP_CFG 1\n')
+      # Needed for reseting the above later, but also good to have in general
+      self._write(b'set ENABLE_BREAK 1\n')
     else:
       raise UnsupportedDeviceError(self.model)
     self._read_line(['switch: '])
 
   def boot(self):
     """Boot device."""
-    self.port.write(b'boot\n')
+    self._write(b'boot\n')
 
   def set_switch_number(self, num, prio):
     """Configure switch stack identity."""
     if self.model.startswith('WS-C3850-'):
-      self.port.write(b'set SWITCH_NUMBER ' + str(num).encode() + b'\n')
+      self._write(b'set SWITCH_NUMBER ' + str(num).encode() + b'\n')
       self._read_line(['switch: '])
-      self.port.write(b'set SWITCH_PRIORITY ' + str(prio).encode() + b'\n')
+      self._write(b'set SWITCH_PRIORITY ' + str(prio).encode() + b'\n')
       self._read_line(['switch: '])
 
   def wait_for_boot_complete(self):
     """Wait for system bootup complete."""
-    cisco_config_prompt = (
-            'Would you like to enter the initial configuration dialog\? \[yes/no\]: ')
-    cisco_booted = 'Press RETURN to get started'
-    line = self._read_line([cisco_config_prompt, cisco_booted])
-    if line == cisco_config_prompt:
-      self.port.write(b'no\n')
-    return
+    while True:
+      cisco_config_prompt = (
+              'Would you like to enter the initial configuration dialog\? \[yes/no\]: ')
+      cisco_booted = '.*Press RETURN to get started.*'
+      line = self._read_line([cisco_config_prompt, cisco_booted])
+      if line == cisco_config_prompt:
+        self._write(b'no\n')
+      if line == cisco_booted:
+        # Even though Cisco says that you can press enter to get started,
+        # it might take a while to wake up
+        time.sleep(1)
+        self.poke()
+        time.sleep(1)
+        self.poke()
+        time.sleep(1)
+        self.poke()
+        return
 
   def configure(self):
     """Bring the device to a state where swboot can configure it."""
     # Password recovery on Cisco devices shuts down all interfaces,
     # so we have to bring them up explicitly and then reload for
     # auto install to do its thing
-    if self.model.startswith('WS-C3850-') and self.mgmt_if_status:
-      self.poke()
-      self.port.write(b'en\n')
-      self.port.write(b'conf t\n')
-      self.port.write(b'int vlan 1\n')
-      self.port.write(b'no shut\n')
-      self.port.write(b'end\n')
-      self.port.write(b'reload\n')
-      self.port.write(b'no\n')
-      self.port.write(b'\n')
+    if self.model.startswith('WS-C3850-'):
+      # Erase config on master device and reload both
+      if self.mgmt_if_status:
+        self.poke()
+        self._write(b'en\n')
+        self._write(b'wr erase\n')
+        self._write(b'\n')
+        self._write(b'reload\n')
+        self._write(b'no\n')
+        self._write(b'\n')
+      self.wait_for_bootloader()
+      self._write(b'set SWITCH_IGNORE_STARTUP_CFG 0\n')
+      self._read_line(['switch: '])
+      self._write(b'boot\n')
 
 
 class Events(object):
