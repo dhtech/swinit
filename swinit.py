@@ -1,7 +1,9 @@
 from absl import app
 from absl import flags
 import os
+import re
 import serial
+import sys
 
 
 FLAGS = flags.FLAGS
@@ -21,14 +23,10 @@ class DeviceTimeoutError(Error):
 class Device(object):
   def __init__(self, port):
     self.port = port
+    self.model = None
+    self.mgmt_if_status = None
 
-  def wait_for_bootloader(self):
-    """Wait for bootloader, most commonly ROMMON.
-
-    During boot we will try to identify the device and
-    return when the device is in this bootloader.
-    """
-    # TODO(bluecmd): Only cisco switches are supported right now
+  def _read_line(self, stops, rest=False):
     line = ""
     while True:
       b = self.port.read()
@@ -42,12 +40,56 @@ class Device(object):
         continue
 
       if b == b'\n' or b == b'\r':
+        if rest:
+          # If asked for the rest of line, abort if we hit it
+          print()
+          return line
+        if line != "":
+          print()
         line = ""
       else:
         line = line + b.decode()
-      print("Line is now: '" + line + "'")
-      if line == "switch: ":
-        return
+        sys.stdout.write("Line is now: '" + line + "'\r")
+        sys.stdout.flush()
+      for stop in stops:
+        if re.match(stop, line):
+          print()
+          return stop
+
+  def wait_for_bootloader(self):
+    """Wait for bootloader, most commonly ROMMON.
+
+    During boot we will try to identify the device and
+    return when the device is in this bootloader.
+    """
+    # TODO(bluecmd): Only cisco switches are supported right now
+    self._read_line(['switch: '])
+
+  def learn_model(self):
+    """Figure out what model the device is."""
+
+    self.port.write(b'set\n')
+    self._read_line(['MODEL_NUM='])
+    self.model = self._read_line([], rest=True)
+    self._read_line(['switch: '])
+    print("Model is:", self.model)
+
+  def has_mgmt_interface(self):
+    """If the device has an Ethernet management interface."""
+    if self.model.startswith('WS-C3850-'):
+      return True
+    return False
+
+  def probe_mgmt_if(self):
+    """Detect management if port status."""
+    self.port.write(b'mgmt_init\n')
+    mgmt_up = 'switch: '
+    mgmt_down = '.*PHY link is down'
+    line = self._read_line([mgmt_up, mgmt_down])
+    self.mgmt_if_status = (line == mgmt_up)
+    if line != mgmt_up:
+      # Make sure to read the extra stuff before we return
+      self._read_line(['switch: '])
 
   def poke(self):
     """Send CR to solicit any response from the device."""
@@ -94,6 +136,13 @@ def main(argv):
 
       print("Detected bootloader")
       events.detected()
+
+      device.learn_model()
+
+      if device.has_mgmt_interface():
+        print("Probing management interface")
+        device.probe_mgmt_if()
+        print(device.mgmt_if_status)
 
       print("Done")
     except DeviceTimeoutError:
