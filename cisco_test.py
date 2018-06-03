@@ -74,6 +74,36 @@ class CiscoTestCase(absltest.TestCase):
     thing = swinit.loop(port.fake, events)
     assert not thing.is_stack_primary()
 
+  def test_2950_flow(self):
+    port = swinit_test_lib.FakeSerial()
+    port.wait_for('\n')
+    port.say('switch: ')
+    port.wait_for('version\n')
+    port.say('C2950 Boot Loader (C2950-HBOOT-M) Version 12.1(11r)EA1\n')
+    port.say('Compiled blahbahba\n')
+    port.say('switch: ')
+    port.wait_for('flash_init\n')
+    port.say('...done initializing flash.')
+    port.say('switch: ')
+    for i in ['config.text', 'vlan.dat', 'private-config.text', 'env_vars']:
+      port.wait_for('del flash:/' + i + '\n')
+      port.say('Are you sure you want to delete "flash:/' + i + '" (y/n)?\n')
+      port.wait_for('y\n')
+      port.say('switch: ')
+    port.wait_for('boot\n')
+    port.say('Would you like to enter the initial configuration dialog? [yes/no]: ')
+    port.wait_for('no\n')
+    port.say('Press RETURN to get started!')
+    # Ignore the first \r to run the retry-logic
+    port.wait_for('\r')
+    port.wait_for('\r')
+    port.say('YUNKYUMNKYNKSwitch>YNKYUNK')
+    # We're purging any log lines we don't care about at this point, so
+    # emulate a clean terminal to say "things have calmed down, continue".
+    port.timeout()
+    port.wait_for('reload\n')
+    events = mock.MagicMock(swinit.Events)
+    thing = swinit.loop(port.fake, events)
 
 if __name__ == '__main__':
   absltest.main()

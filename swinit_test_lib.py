@@ -13,7 +13,8 @@ class _FakeSerialImpl(object):
     self.parent.mock_send_break()
 
   def write(self, data):
-    self.parent.mock_write(data)
+    for c in data:
+      self.parent.mock_write(bytes([c]))
 
   def read(self):
     return self.parent.mock_read()

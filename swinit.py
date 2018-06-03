@@ -68,6 +68,8 @@ def loop(port, events):
   print('Model is', model)
   if cisco.Cisco3850.matches_model(model):
     thing = cisco.Cisco3850(port)
+  elif cisco.Cisco2950.matches_model(model):
+    thing = cisco.Cisco2950(port)
   else:
     raise UnsupportedDeviceError(model)
 

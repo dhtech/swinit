@@ -84,9 +84,16 @@ class Device(object):
 
   def learn_model(self):
     """Figure out what model the device is."""
+    self._write(b'version\n')
     self._write(b'set\n')
-    self._read_line(['MODEL_NUM='])
-    model = self._read_line([], rest=True)
+    c2950_marker = '.*C2950-HBOOT.*'
+    has_model_marker = 'MODEL_NUM='
+    hit = self._read_line([has_model_marker, c2950_marker])
+    model = None
+    if hit == c2950_marker:
+      model = 'WS-C2950'
+    elif hit == has_model_marker:
+      model = self._read_line([], rest=True)
     self._read_line(['switch: '])
     return model
 
