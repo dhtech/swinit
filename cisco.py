@@ -67,6 +67,25 @@ class CiscoSwitch(device.DeviceModel):
       self._clear_buffer()
       return
 
+  def configure(self):
+    """Bring the device to a state where swboot can configure it."""
+    # Password recovery on Cisco devices shuts down all interfaces,
+    # so we have to bring them up explicitly and then reload for
+    # auto install to do its thing
+    # Erase config on master device and reload both
+    if self._is_stack_primary:
+      self._clear_buffer()
+      self.poke()
+      self._write(IOS_DEFAULT_CONFIG.encode())
+      self._write(b'wr\n')
+      self._write(b'\n')
+      self._write(b'reload\n')
+      self._write(b'\n')
+    self.wait_for_bootloader()
+    self._write(b'set SWITCH_IGNORE_STARTUP_CFG 0\n')
+    self._read_line(['switch: '])
+    self._write(b'boot\n')
+
 
 class Cisco3850(CiscoSwitch):
 
@@ -99,23 +118,4 @@ class Cisco3850(CiscoSwitch):
       # Make sure to read the extra stuff before we return
       self._read_line(['switch: '])
     return (line == mgmt_up)
-
-  def configure(self):
-    """Bring the device to a state where swboot can configure it."""
-    # Password recovery on Cisco devices shuts down all interfaces,
-    # so we have to bring them up explicitly and then reload for
-    # auto install to do its thing
-    # Erase config on master device and reload both
-    if self._is_stack_primary:
-      self._clear_buffer()
-      self.poke()
-      self._write(IOS_DEFAULT_CONFIG.encode())
-      self._write(b'wr\n')
-      self._write(b'\n')
-      self._write(b'reload\n')
-      self._write(b'\n')
-    self.wait_for_bootloader()
-    self._write(b'set SWITCH_IGNORE_STARTUP_CFG 0\n')
-    self._read_line(['switch: '])
-    self._write(b'boot\n')
 
