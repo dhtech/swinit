@@ -47,7 +47,7 @@ class CiscoSwitch(device.DeviceModel):
           self._write(b'\r')
           self._read_line(['.*Switch>'])
           break
-        except DeviceTimeoutError:
+        except device.DeviceTimeoutError:
           print('Console not responsive yet, retrying')
       self.port.timeout = old_timeout
       self._clear_buffer()

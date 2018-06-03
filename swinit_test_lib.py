@@ -58,6 +58,11 @@ class FakeSerial(object):
     self.triggers.append(text.encode())
     self.buffers.append(b'')
 
+  def timeout(self):
+    """Emulate a read timeout."""
+    # NULL will not be part of tests, use it to emulate timeout
+    self.buffers[-1] += bytes([0])
+
   def wait_for_break(self):
     """New wait_for break trigger."""
     self.triggers.append(TRIGGER_BREAK)
@@ -67,6 +72,9 @@ class FakeSerial(object):
     if self.read_idx < len(self.buffers[0]):
       b = self.buffers[0][self.read_idx]
       self.read_idx += 1
+      if b == 0:
+        # NULL will not be part of tests, use it to emulate timeout
+        return b''
       return bytes([b])
     else:
       return b''
