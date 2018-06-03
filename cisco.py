@@ -1,7 +1,3 @@
-"""Support for Cisco 3850 series switches.
-
-Handles stacking of switches.
-"""
 import abc
 import device
 
