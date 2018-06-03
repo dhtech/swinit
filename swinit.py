@@ -111,10 +111,11 @@ def main(argv):
   while True:
     try:
       loop(port, events)
+      print('#### Configuration done, resetting state for new device ####')
     except UnsupportedDeviceError as e:
       print('Unsupported device encountered, resetting state: ', str(e))
       events.unsupported()
-    except DeviceTimeoutError:
+    except device.DeviceTimeoutError:
       print('Device timed out, resetting state')
       events.timeout()
 
