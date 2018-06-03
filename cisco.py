@@ -6,6 +6,20 @@ import abc
 import device
 
 
+IOS_DEFAULT_CONFIG = """
+en
+conf t
+snmp-server community public RO
+snmp-server community private RW
+snmp-server system-shutdown
+boot host dhcp
+interface vlan 1
+no ip address
+no shut
+end
+"""
+
+
 class CiscoSwitch(device.DeviceModel):
 
   def clear_config(self):
@@ -95,8 +109,8 @@ class Cisco3850(CiscoSwitch):
     if self._is_stack_primary:
       self._clear_buffer()
       self.poke()
-      self._write(b'en\n')
-      self._write(b'wr erase\n')
+      self._write(IOS_DEFAULT_CONFIG.encode())
+      self._write(b'wr\n')
       self._write(b'\n')
       self._write(b'reload\n')
       self._write(b'\n')
@@ -104,5 +118,4 @@ class Cisco3850(CiscoSwitch):
     self._write(b'set SWITCH_IGNORE_STARTUP_CFG 0\n')
     self._read_line(['switch: '])
     self._write(b'boot\n')
-
 
