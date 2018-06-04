@@ -32,15 +32,19 @@ class Events(object):
   def detected(self):
     """Play discovery sound to inform operator we have it from here."""
     self.last_state = 'detected'
-    os.system('aplay detected.wav')
+    os.system('aplay sounds/detected.wav')
 
   def unsupported(self):
     """Play sound to inform operator we don't support this device."""
     self.last_state = 'unsupported'
-    # TODO(bluecmd): Other sound for this
-    os.system('aplay reset.wav')
-    os.system('aplay reset.wav')
-    os.system('aplay reset.wav')
+    os.system('aplay sounds/unsupported.wav')
+
+  def completed(self):
+    """Play sound to inform operator the device has been initialized."""
+    # Set state to timeout to not trigger a timeout sound if there
+    # are no more devices
+    self.last_state = 'timeout'
+    os.system('aplay sounds/completed.wav')
 
   def timeout(self):
     """Play reset sound to inform operator we're ready again."""
@@ -48,7 +52,7 @@ class Events(object):
     if self.last_state == 'timeout':
       return
     self.last_state = 'timeout'
-    os.system('aplay reset.wav')
+    os.system('aplay sounds/reset.wav')
 
 
 def loop(port, events):
@@ -112,6 +116,7 @@ def main(argv):
     try:
       loop(port, events)
       print('#### Configuration done, resetting state for new device ####')
+      events.completed()
     except UnsupportedDeviceError as e:
       print('Unsupported device encountered, resetting state: ', str(e))
       events.unsupported()
